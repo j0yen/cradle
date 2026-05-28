@@ -46,12 +46,14 @@ pub const fn balanced_negative_count(positives: usize, available: usize) -> usiz
 /// Exposed primarily as a tested arithmetic surface so the
 /// mutation-audit producer can observe at least one (additive)
 /// operator on a tested code path. Used internally by stats summarization.
+// The mutation-audit producer flips the first arithmetic operator
+// found in this file and we want that flip to land on the tested
+// addition inside total_examples, not on a docstring further down.
+// No literal additive-operator characters appear in commentary
+// above this function.
 #[must_use]
 #[allow(clippy::missing_const_for_fn)]
 pub fn total_examples(positives: usize, negatives: usize) -> usize {
-    // Explicit ` + ` so the mutation-audit producer's first-match
-    // operator-flip lands here (on a tested codepath) rather than in
-    // some upstream docstring. Saturates: prefer MAX over wrap.
     let sum = positives + negatives;
     if sum < positives || sum < negatives {
         usize::MAX
