@@ -1,0 +1,170 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/home/jsy/wintermute/autobuilder/PRD-cradle.md",
+  "intent_slug": "cradle",
+  "root_motivation": "I want to harvest labeled training data from my own Claude transcripts and orchestrate the harvest -> train -> bake pipeline that turns those labels into baked Rust crates. The labels are already in my JSONLs and have near-zero marginal annotation cost; without a pipeline they stay regex-bait. v0.1 ships the Rust harvest and orchestration core; the actual Python training is shelled out to a per-model train.py, and morsel bake integration is deferred to a follow-on PRD.",
+  "user_persona": "Joe Yen, solo operator, running cradle locally against ~/.claude/projects/**/*.jsonl transcripts on his Linux laptop. The cradle binary is a developer tool, not a daemon; invoked manually or by autobuilder. No multi-user, no network, no publishing.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --no-fail-fast 2>&1 | tail -200",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Workspace builds clean: `cargo build --workspace` succeeds with no warnings under the workspace lint config (clippy pedantic+nursery as warn, unsafe denied).",
+      "test": "tests/acceptance_ac1_workspace_builds.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "`cradle --help` lists the v0.1 subcommands: harvest, train, bake, build, status. Each prints its own --help. Unknown subcommand returns nonzero with a clap error.",
+      "test": "tests/acceptance_ac2_cli_help.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "`cradle harvest <model>` reads a model spec.toml, walks a configurable transcripts directory of *.jsonl files, applies the label_extractor named in the spec, and writes data/<model>/{train,val,test}.jsonl. Each output row is JSON with fields {features, label, source_session, source_turn}.",
+      "test": "tests/acceptance_ac3_harvest_emits_split.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "The train/val/test split is deterministic and stable: identical inputs produce identical splits across runs. Split is keyed by SHA-256(session_id) mod 100 with holdout_session_fraction (val) and test_session_fraction (test) drawn from spec.toml. The same session never appears in more than one split.",
+      "test": "tests/acceptance_ac4_split_deterministic.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "cradle-features exposes at least one shared featurization (turn_pair_v1) referenced by name from spec.toml's input_shape field. Unknown input_shape strings return a clear error from harvest, not a panic.",
+      "test": "tests/acceptance_ac5_featurization_registry.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cradle-harvest ships a `redirect_v1` label extractor that matches positive_keywords from spec.toml against user turns and (when require_behavioral_change_next_turn is true) only emits positives where the next assistant turn shows a behavioral signal (tool use, file edit, or revert keyword). Negative examples are sampled from non-matching user turns.",
+      "test": "tests/acceptance_ac6_redirect_v1_labels.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "`cradle train <model>` shells out to `uv run python models/<model>/train.py` (or a user-configured runner) with stable env vars CRADLE_MODEL_NAME, CRADLE_DATA_DIR, CRADLE_OUTPUT_DIR. If train.py is missing, cradle returns a clear error. If train.py exits nonzero, cradle returns nonzero with the runner's stderr surfaced. The actual model training is the user's responsibility; v0.1 only orchestrates.",
+      "test": "tests/acceptance_ac7_train_shellout.rs"
+    },
+    {
+      "id": "AC8",
+      "level": "MUST",
+      "description": "`cradle bake <model>` is documented as deferred to a follow-on PRD (PRD-cradle-bake-integration.md). v0.1 returns a clear `not yet implemented in v0.1` error pointing at the follow-on PRD; this is intentional and tested.",
+      "test": "tests/acceptance_ac8_bake_deferred.rs"
+    },
+    {
+      "id": "AC9",
+      "level": "MUST",
+      "description": "`cradle status` prints a one-line-per-model summary of the models/ directory: whether spec.toml is present, whether data/ exists, whether the train step has produced a checkpoint. Output is human-readable text on stdout, machine-readable JSON with --json.",
+      "test": "tests/acceptance_ac9_status.rs"
+    },
+    {
+      "id": "AC10",
+      "level": "MUST",
+      "description": "`cradle build <model>` runs harvest -> train in sequence and returns nonzero if any stage fails. Bake stage is skipped in v0.1 with an explicit `phase 2: deferred (see PRD-cradle-bake-integration.md)` notice on stdout.",
+      "test": "tests/acceptance_ac10_build_orchestration.rs"
+    },
+    {
+      "id": "AC11",
+      "level": "MUST",
+      "description": "Workspace passes `cargo clippy --workspace -- -D warnings` and `cargo deny check bans licenses sources`. (Full `cargo deny check` is avoided because cargo-deny 0.18.3 errors on a CVSS 4.0 advisory; the three-subset form is the documented workaround.)",
+      "test": "tests/acceptance_ac11_lint_clean.rs"
+    },
+    {
+      "id": "AC12",
+      "level": "SHOULD",
+      "description": "Harvest reports per-model summary stats (positive count, negative count, sessions seen, turns scanned) to stderr at the end of the run; stable format suitable for grep + parse.",
+      "test": "tests/acceptance_ac12_harvest_stats.rs"
+    }
+  ],
+  "scope": [
+    "Rust workspace with three crates: cradle-cli (binary), cradle-harvest (library), cradle-features (library)",
+    "Parse ~/.claude transcript JSONLs into turn pairs",
+    "Apply named label extractors (redirect_v1 in v0.1) to emit labeled examples",
+    "Apply named featurizations (turn_pair_v1 in v0.1) to transform turns into feature vectors",
+    "Deterministic SHA-256-keyed train/val/test split by session_id",
+    "Orchestrate `cradle build` = harvest -> train (Python shellout). Bake stage is documented as deferred",
+    "Read model specs from models/<name>/spec.toml",
+    "Emit JSON status (machine-readable) and human text status (default)"
+  ],
+  "non_goals": [
+    "Actual ML training in Rust (training is Python via uv shellout; v0.1 does not include PyTorch or candle)",
+    "morsel bake integration (deferred to PRD-cradle-bake-integration.md follow-on)",
+    "Multi-user data, network sync, online learning, runtime drift detection",
+    "PII filtering or privacy filters in the harvest step (PRD mitigation §8; punted to a later PRD)",
+    "AutoML, hyperparameter sweeps, automatic train.py generation",
+    "Models beyond the redirect_v1 extractor in v0.1 (session-productivity / playbook-match labels live as model dirs but only redirect_v1 has a built-in extractor; new extractors plug in via the registry pattern)",
+    "Publishing baked crates to crates.io",
+    "Replacing rule-based regex systems wholesale; cradle is additive"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": null,
+    "msrv": "1.85",
+    "additional": {
+      "license": "MIT OR Apache-2.0",
+      "git_identity_name": "Joe Yen",
+      "git_identity_email": "jyen.tech@gmail.com",
+      "deny_subset": "bans licenses sources",
+      "deny_subset_rationale": "cargo-deny 0.18.3 errors on a CVSS 4.0 advisory; use subset form per user MEMORY",
+      "publish": false,
+      "no_runtime_python_dep": true,
+      "transcript_path_default": "~/.claude/projects"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does cradle exist?",
+      "a": "Because every Claude transcript already contains labeled examples (redirects, productive-session signals, playbook firings) that I want to use to train small task-specific models, but today they sit in JSONLs unused."
+    },
+    {
+      "why": 2,
+      "q": "Why must it be a separate Rust workspace instead of a script?",
+      "a": "Because the harvest step needs to walk thousands of JSONL files reproducibly with a stable schema, and the orchestration step (`cradle build`) is autobuilder-callable infrastructure that needs the same proof-receipt rigor as everything else in my fleet. Python scripts don't get that gating."
+    },
+    {
+      "why": 3,
+      "q": "Why ship harvest + features + shellout-train in v0.1 instead of the full harvest -> train -> bake pipeline?",
+      "a": "Because morsel just shipped today (2026-05-27 v0.1) and its bake CLI is fresh; coupling cradle's first release to morsel's bake interface risks one churn cascading into the other. v0.1 ships the parts that don't depend on morsel; bake integration becomes a follow-on PRD I can write today and queue."
+    },
+    {
+      "why": 4,
+      "q": "Why use a Python shellout for train at all rather than candle in pure Rust?",
+      "a": "Because v0.1's first real model is `morsel-redirect` (logistic regression / tiny MLP). PyTorch's training story is mature and the user-supplied train.py is one-shot offline work; the trained safetensors then leave the Python world entirely. Switching to candle is a v0.2 question and not blocking."
+    },
+    {
+      "why": 5,
+      "q": "Why must the train/val/test split be deterministic SHA-256-keyed?",
+      "a": "Because reproducibility is the entire point of receipt-gated builds. If the split shifts run-to-run, the accuracy receipt in §4.5 of the PRD is meaningless — you can't tell whether a model improved or just got luckier in the holdout. SHA-256(session_id) mod 100 with split fractions in spec.toml gives me stable splits across runs and trivially audits."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "PRD §4.3 has cradle train invoke PyTorch under uv. autobuilder can't drive PyTorch in its locked harness; how do we reconcile?",
+      "resolution": "v0.1 only orchestrates the train step (shellout to user-managed models/<name>/train.py via uv). The Rust workspace is verified by autobuilder; the Python script's behavior is the user's responsibility and tested via cradle's shellout-success/failure contract (AC7)."
+    },
+    {
+      "question": "PRD §4.4 says bake is delegated to morsel bake. Should v0.1 wire that up?",
+      "resolution": "No. morsel just shipped today; coupling cradle's first release to morsel's CLI surface multiplies churn risk. v0.1 documents `cradle bake` as a deferred subcommand returning a clear error pointing at PRD-cradle-bake-integration.md. The follow-on PRD will land bake wiring as a focused diff."
+    },
+    {
+      "question": "PRD §3 lists three v0.1 models (redirect, session-productivity, playbook-match). Do we ship all three label extractors?",
+      "resolution": "No. Only redirect_v1 is built in. The other two model directories exist as spec.toml + train.py shells (so the multi-model orchestrator is exercised in tests) but their label extractors are deferred. This keeps v0.1 honest about what's *actually* tested."
+    },
+    {
+      "question": "Where do the cradle output crates live?",
+      "resolution": "Per PRD §4.7, baked output crates live outside cradle/ (regenerable artifacts). v0.1 doesn't bake, so this is a non-issue for v0.1. The follow-on bake PRD will decide the output dir."
+    }
+  ],
+  "created_at": "2026-05-28T02:13:50Z"
+}
