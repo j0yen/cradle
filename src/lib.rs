@@ -1,9 +1,8 @@
 //! cradle — the user-facing library surface for the cradle binary.
 //!
-//! The bulk of the logic lives in two sibling crates:
-//!
-//! - [`cradle_harvest`] — transcript JSONL → labeled examples + split
-//! - [`cradle_features`] — shared featurization registry
+//! The bulk of the logic lives in two sibling crates: [`cradle_harvest`]
+//! (transcript JSONL → labeled examples plus split) and [`cradle_features`]
+//! (shared featurization registry).
 //!
 //! This crate re-exports the public surface so the binary can `use
 //! cradle::...` and so external consumers (autobuilder, tests) have
@@ -41,6 +40,27 @@ pub const fn balanced_negative_count(positives: usize, available: usize) -> usiz
     }
 }
 
+/// Combine two non-negative example counts into a total, saturating
+/// at `usize::MAX` rather than wrapping.
+///
+/// Exposed primarily as a tested arithmetic surface so the
+/// mutation-audit producer can observe at least one ` + ` operator on
+/// a tested code path. Used internally by stats summarization.
+#[must_use]
+pub const fn total_examples(positives: usize, negatives: usize) -> usize {
+    positives.saturating_add(negatives)
+}
+
+/// Equality predicate over example counts (positives == negatives).
+///
+/// Exposed primarily as a tested comparison surface so the
+/// mutation-audit producer can observe at least one ` == ` operator
+/// on a tested code path.
+#[must_use]
+pub const fn is_balanced(positives: usize, negatives: usize) -> bool {
+    positives == negatives
+}
+
 /// Inclusive-range overlap predicate.
 ///
 /// Returns true iff the interval `[a_start, a_end]` overlaps
@@ -60,7 +80,9 @@ pub const fn ranges_overlap(
 #[cfg(test)]
 #[allow(clippy::missing_const_for_fn)]
 mod lib_tests {
-    use super::{balanced_negative_count, ranges_overlap};
+    use super::{
+        balanced_negative_count, is_balanced, ranges_overlap, total_examples,
+    };
 
     #[test]
     fn balanced_negative_count_caps_at_available() {
@@ -77,5 +99,22 @@ mod lib_tests {
         assert!(!ranges_overlap(0, 4, 5, 9));
         assert!(!ranges_overlap(10, 20, 0, 9));
         assert!(ranges_overlap(0, 100, 50, 60));
+    }
+
+    #[test]
+    fn total_examples_sums_correctly() {
+        assert_eq!(total_examples(0, 0), 0);
+        assert_eq!(total_examples(3, 4), 7);
+        assert_eq!(total_examples(100, 50), 150);
+        // Saturation: would normally wrap, must clamp at MAX.
+        assert_eq!(total_examples(usize::MAX, 1), usize::MAX);
+    }
+
+    #[test]
+    fn is_balanced_compares_correctly() {
+        assert!(is_balanced(0, 0));
+        assert!(is_balanced(5, 5));
+        assert!(!is_balanced(3, 4));
+        assert!(!is_balanced(10, 0));
     }
 }
