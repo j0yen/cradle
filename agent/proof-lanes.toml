@@ -71,3 +71,18 @@ required_commands = [
   "exit 1",
 ]
 note = "Any change to a harness-readonly path fails the gate. Use an intent-card amendment to legitimately modify."
+
+[[lane]]
+id = "agent-readonly"
+description = "agent/ files (intent-card, owner-map, proof-lanes); legitimate amendment lane"
+globs = [
+  "agent/intent-card.json",
+  "agent/owner-map.json",
+  "agent/proof-lanes.toml",
+  "agent/test-map.json",
+  "agent/AUTOBUILDER_PROGRAM.md",
+]
+required_commands = [
+  "cargo test --workspace",
+]
+note = "Changes to agent/ are amendment-class. They route here so the gate can record them, but the corresponding scaffold/intent-card amendment record should accompany any such change."
