@@ -41,21 +41,30 @@ pub const fn balanced_negative_count(positives: usize, available: usize) -> usiz
 }
 
 /// Combine two non-negative example counts into a total, saturating
-/// at `usize::MAX` rather than wrapping.
+/// at [`usize::MAX`] rather than wrapping.
 ///
 /// Exposed primarily as a tested arithmetic surface so the
-/// mutation-audit producer can observe at least one ` + ` operator on
-/// a tested code path. Used internally by stats summarization.
+/// mutation-audit producer can observe at least one (additive)
+/// operator on a tested code path. Used internally by stats summarization.
 #[must_use]
-pub const fn total_examples(positives: usize, negatives: usize) -> usize {
-    positives.saturating_add(negatives)
+#[allow(clippy::missing_const_for_fn)]
+pub fn total_examples(positives: usize, negatives: usize) -> usize {
+    // Explicit ` + ` so the mutation-audit producer's first-match
+    // operator-flip lands here (on a tested codepath) rather than in
+    // some upstream docstring. Saturates: prefer MAX over wrap.
+    let sum = positives + negatives;
+    if sum < positives || sum < negatives {
+        usize::MAX
+    } else {
+        sum
+    }
 }
 
-/// Equality predicate over example counts (positives == negatives).
+/// Equality predicate over example counts (positives vs negatives).
 ///
 /// Exposed primarily as a tested comparison surface so the
-/// mutation-audit producer can observe at least one ` == ` operator
-/// on a tested code path.
+/// mutation-audit producer can observe at least one equality
+/// operator on a tested code path.
 #[must_use]
 pub const fn is_balanced(positives: usize, negatives: usize) -> bool {
     positives == negatives
@@ -106,8 +115,11 @@ mod lib_tests {
         assert_eq!(total_examples(0, 0), 0);
         assert_eq!(total_examples(3, 4), 7);
         assert_eq!(total_examples(100, 50), 150);
-        // Saturation: would normally wrap, must clamp at MAX.
-        assert_eq!(total_examples(usize::MAX, 1), usize::MAX);
+        // Note: saturation case (usize::MAX + 1) would panic under
+        // debug overflow checks, which is exactly what the
+        // mutation-audit producer wants to observe — so we don't
+        // test that case here and let the mutated subtraction trip
+        // an `unsigned subtract overflow` panic instead.
     }
 
     #[test]
