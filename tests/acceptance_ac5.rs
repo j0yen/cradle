@@ -11,12 +11,33 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use cradle::features::{TurnPair, featurize_turn_pair, registered_shapes};
 
 #[test]
 fn acceptance_ac5() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC5 not yet implemented — see file header");
+    // Registry advertises turn_pair_v1.
+    assert!(
+        registered_shapes().contains(&"turn_pair_v1"),
+        "turn_pair_v1 must be in the registry; got {:?}",
+        registered_shapes()
+    );
+
+    // turn_pair_v1 actually works.
+    let pair = TurnPair {
+        prev_assistant: "running".into(),
+        user_turn: "actually, no — different".into(),
+        next_assistant: None,
+    };
+    let v = featurize_turn_pair("turn_pair_v1", &pair).expect("v1 applies");
+    assert!(!v.is_empty(), "feature vec should be non-empty");
+
+    // Unknown shape → typed error, not a panic.
+    let err = featurize_turn_pair("does_not_exist_v0", &pair).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("does_not_exist_v0"),
+        "error should mention the unknown shape; got: {msg}"
+    );
 }

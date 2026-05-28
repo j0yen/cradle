@@ -11,12 +11,79 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::fs;
+use std::process::Command;
+
+fn bin() -> std::path::PathBuf {
+    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("target");
+    p.push("debug");
+    p.push("cradle");
+    p
+}
+
+fn ensure_bin_built() {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--bin", "cradle", "--quiet"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo build failed");
+}
 
 #[test]
 fn acceptance_ac9() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC9 not yet implemented — see file header");
+    ensure_bin_built();
+    let exe = bin();
+    let tmp = tempfile::tempdir().unwrap();
+    let models = tmp.path().join("models");
+    fs::create_dir_all(models.join("alpha")).unwrap();
+    fs::write(
+        models.join("alpha").join("spec.toml"),
+        r#"name = "alpha"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+"#,
+    )
+    .unwrap();
+    fs::write(models.join("alpha").join("train.py"), "# stub\n").unwrap();
+    fs::create_dir_all(models.join("beta")).unwrap(); // empty model dir — no spec
+
+    // Human-readable.
+    let out = Command::new(&exe)
+        .args(["status", "--models-dir"])
+        .arg(&models)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "status should succeed");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("alpha"), "alpha should appear; got: {s}");
+    assert!(s.contains("beta"), "beta should appear; got: {s}");
+    assert!(
+        s.contains("spec=yes") || s.contains("spec=no"),
+        "human output must include spec=... field; got: {s}"
+    );
+
+    // JSON.
+    let out = Command::new(&exe)
+        .args(["status", "--json", "--models-dir"])
+        .arg(&models)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(parsed["schema"], "cradle.status.v1");
+    let models_arr = parsed["models"].as_array().unwrap();
+    assert!(models_arr.iter().any(|m| m["name"] == "alpha"));
+    assert!(models_arr.iter().any(|m| m["name"] == "beta"));
+    let alpha = models_arr
+        .iter()
+        .find(|m| m["name"] == "alpha")
+        .unwrap();
+    assert_eq!(alpha["spec_present"], true);
+    assert_eq!(alpha["train_script_present"], true);
+    assert_eq!(alpha["data_present"], false);
+    assert_eq!(alpha["checkpoint_present"], false);
 }

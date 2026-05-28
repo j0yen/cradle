@@ -11,12 +11,40 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::process::Command;
+
+fn bin() -> std::path::PathBuf {
+    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("target");
+    p.push("debug");
+    p.push("cradle");
+    p
+}
+
+fn ensure_bin_built() {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--bin", "cradle", "--quiet"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo build failed");
+}
 
 #[test]
 fn acceptance_ac2() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC2 not yet implemented — see file header");
+    ensure_bin_built();
+    let exe = bin();
+    let out = Command::new(&exe).arg("--help").output().unwrap();
+    assert!(out.status.success(), "--help should succeed");
+    let s = String::from_utf8_lossy(&out.stdout);
+    for sub in ["harvest", "train", "bake", "build", "status"] {
+        assert!(s.contains(sub), "--help missing subcommand {sub}: {s}");
+    }
+    for sub in ["harvest", "train", "bake", "build", "status"] {
+        let out = Command::new(&exe).args([sub, "--help"]).output().unwrap();
+        assert!(out.status.success(), "{sub} --help should succeed");
+    }
+    let bad = Command::new(&exe).arg("nope-not-a-subcommand").output().unwrap();
+    assert!(!bad.status.success(), "unknown subcommand must be nonzero");
 }

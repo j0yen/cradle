@@ -11,12 +11,113 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::fs;
+use std::io::{BufRead, BufReader};
+
+use cradle::orchestrator::run_harvest;
+
+fn write(path: &std::path::Path, body: &str) {
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p).unwrap();
+    }
+    fs::write(path, body).unwrap();
+}
+
+fn spec_toml() -> &'static str {
+    r#"
+name = "redirect"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0
+
+[label_extractor.redirect_v1]
+positive_keywords = ["wait", "no", "actually"]
+require_behavioral_change_next_turn = false
+"#
+}
+
+fn transcript(session: &str, turns: &[(&str, &str)]) -> String {
+    turns
+        .iter()
+        .map(|(role, text)| {
+            let v = serde_json::json!({
+                "type": role,
+                "message": {
+                    "role": role,
+                    "content": [{ "type": "text", "text": text }]
+                }
+            });
+            let _ = session; // session_id derived from filename in this harness
+            v.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[test]
 fn acceptance_ac3() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC3 not yet implemented — see file header");
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let models = root.join("models");
+    let model_dir = models.join("redirect");
+    write(&model_dir.join("spec.toml"), spec_toml());
+
+    let transcripts = root.join("transcripts");
+    write(
+        &transcripts.join("session-001.jsonl"),
+        &transcript(
+            "session-001",
+            &[
+                ("assistant", "I will run the failing command."),
+                ("user", "wait, no — try the other one instead"),
+                ("assistant", "let me try the other command"),
+                ("user", "great"),
+                ("assistant", "done"),
+            ],
+        ),
+    );
+    write(
+        &transcripts.join("session-002.jsonl"),
+        &transcript(
+            "session-002",
+            &[
+                ("assistant", "Reading the file."),
+                ("user", "thanks"),
+                ("assistant", "Done."),
+            ],
+        ),
+    );
+
+    let result =
+        run_harvest(&models, "redirect", Some(&transcripts), None).expect("harvest ok");
+    assert_eq!(result.model, "redirect");
+
+    let data_dir = result.data_dir;
+    for split in ["train", "val", "test"] {
+        let p = data_dir.join(format!("{split}.jsonl"));
+        assert!(p.exists(), "missing {split}.jsonl");
+    }
+
+    // At least one labeled row across the splits should validate the JSON shape.
+    let mut saw_row = false;
+    for split in ["train", "val", "test"] {
+        let p = data_dir.join(format!("{split}.jsonl"));
+        let f = std::fs::File::open(&p).unwrap();
+        for line in BufReader::new(f).lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert!(v.get("features").is_some(), "row missing features");
+            assert!(v.get("label").is_some(), "row missing label");
+            assert!(v.get("source_session").is_some(), "row missing source_session");
+            assert!(v.get("source_turn").is_some(), "row missing source_turn");
+            saw_row = true;
+        }
+    }
+    assert!(saw_row, "no rows emitted from harvest");
 }

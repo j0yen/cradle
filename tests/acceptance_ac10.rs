@@ -11,12 +11,96 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::fs;
+use std::process::Command;
+
+fn bin() -> std::path::PathBuf {
+    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("target");
+    p.push("debug");
+    p.push("cradle");
+    p
+}
+
+fn ensure_bin_built() {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--bin", "cradle", "--quiet"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo build failed");
+}
+
+fn spec_toml(loose: bool) -> String {
+    format!(
+        r#"name = "redirect"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0
+
+[label_extractor.redirect_v1]
+positive_keywords = ["wait", "no", "actually"]
+require_behavioral_change_next_turn = {}
+"#,
+        !loose
+    )
+}
+
+fn make_transcript(path: &std::path::Path) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let lines = [
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"running alpha"}]}}"#,
+        r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"wait, do something different"}]}}"#,
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"running beta entirely different"}]}}"#,
+    ];
+    fs::write(path, lines.join("\n")).unwrap();
+}
 
 #[test]
 fn acceptance_ac10() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC10 not yet implemented — see file header");
+    ensure_bin_built();
+    let exe = bin();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let models = root.join("models");
+    let model_dir = models.join("redirect");
+    fs::create_dir_all(&model_dir).unwrap();
+    fs::write(model_dir.join("spec.toml"), spec_toml(true)).unwrap();
+    let transcripts = root.join("transcripts");
+    make_transcript(&transcripts.join("s.jsonl"));
+
+    // Case A: --skip-train (smoke build).
+    let out = Command::new(&exe)
+        .args(["build", "redirect", "--skip-train", "--models-dir"])
+        .arg(&models)
+        .arg("--transcripts-dir")
+        .arg(&transcripts)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "skip-train build should succeed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("phase 2 deferred"),
+        "build stdout must mention deferred bake; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("PRD-cradle-bake-integration.md"),
+        "build stdout must point at follow-on PRD; got: {stdout}"
+    );
+
+    // Case B: failure propagation — bogus model name → nonzero.
+    let out = Command::new(&exe)
+        .args(["build", "does-not-exist", "--skip-train", "--models-dir"])
+        .arg(&models)
+        .arg("--transcripts-dir")
+        .arg(&transcripts)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "build of missing model must fail");
 }

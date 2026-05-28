@@ -11,12 +11,47 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::collections::BTreeMap;
+
+use cradle::harvest::{Split, split_for_session};
 
 #[test]
 fn acceptance_ac4() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC4 not yet implemented — see file header");
+    // 1. Determinism: identical input → identical split, twice.
+    for i in 0..50 {
+        let id = format!("session-{i}");
+        let a = split_for_session(&id, 15, 15);
+        let b = split_for_session(&id, 15, 15);
+        assert_eq!(a, b, "split flipped for {id}");
+    }
+
+    // 2. No session in more than one split (trivially true since the
+    //    function is total, but enforce via a map walk).
+    let mut seen: BTreeMap<String, Split> = BTreeMap::new();
+    for i in 0..200 {
+        let id = format!("session-{i}");
+        let s = split_for_session(&id, 15, 15);
+        if let Some(prev) = seen.get(&id) {
+            assert_eq!(*prev, s, "session {id} got two splits");
+        } else {
+            seen.insert(id, s);
+        }
+    }
+
+    // 3. SHA-256-keyed: the result depends on the *bytes* of the
+    //    session id, so two distinct ids that hash to different
+    //    buckets must produce different splits at least once.
+    let mut splits = std::collections::HashSet::new();
+    for i in 0..200 {
+        splits.insert(split_for_session(&format!("s-{i}"), 15, 15));
+    }
+    assert_eq!(splits.len(), 3, "all three splits should be represented");
+
+    // 4. Fractions honored: with val_pct=0, no session lands in val.
+    for i in 0..500 {
+        let s = split_for_session(&format!("z-{i}"), 0, 15);
+        assert_ne!(s, Split::Val, "val_pct=0 should produce no val sessions");
+    }
 }

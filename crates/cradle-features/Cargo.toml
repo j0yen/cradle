@@ -1,0 +1,17 @@
+[package]
+name = "cradle-features"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Shared featurization registry for cradle (turn_pair_v1 and friends)"
+repository = "https://github.com/j0yen/cradle"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

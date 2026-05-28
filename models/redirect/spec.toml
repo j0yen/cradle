@@ -1,0 +1,28 @@
+# Model: redirect — detect user-redirect turns.
+# v0.1: harvest + features only. Train/bake are deferred per PRD-cradle-bake-integration.md.
+
+name = "redirect"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+
+# Acceptance thresholds for receipt 7 (see PRD §4.5). Not enforced by
+# cradle v0.1; the follow-on PRD wires them into autobuilder's gate.
+threshold = 0.85
+auc_threshold = 0.85
+
+# Stable session-keyed split, % buckets. Same session never crosses a split boundary.
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0
+
+[label_extractor.redirect_v1]
+positive_keywords = [
+    "wait",
+    "no",
+    "actually",
+    "stop",
+    "go back",
+    "different",
+    "instead",
+]
+require_behavioral_change_next_turn = true
+min_session_age_days = 1

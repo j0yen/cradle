@@ -11,12 +11,21 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use cradle::orchestrator::{OrchestrationError, run_bake};
 
 #[test]
 fn acceptance_ac8() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC8 not yet implemented — see file header");
+    let err = run_bake("redirect").unwrap_err();
+    let msg = err.to_string();
+    assert!(matches!(err, OrchestrationError::BakeDeferred));
+    assert!(
+        msg.contains("PRD-cradle-bake-integration.md"),
+        "error must mention the follow-on PRD; got: {msg}"
+    );
+    assert!(
+        msg.contains("not yet implemented in v0.1"),
+        "error must mention v0.1 deferral; got: {msg}"
+    );
 }

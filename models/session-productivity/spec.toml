@@ -1,0 +1,13 @@
+# Model: session-productivity — predict whether a session is worth a recall memory.
+# v0.1: directory shell only. No label extractor yet — `cradle harvest session-productivity`
+# will return UnknownLabelSource until a `session_productivity_v1` extractor lands.
+
+name = "session-productivity"
+input_shape = "turn_pair_v1"             # placeholder; this model wants a session-level featurization
+label_source = "session_productivity_v1" # NOT YET SHIPPED — see PRD §3 row 2
+
+threshold = 0.80
+auc_threshold = 0.80
+
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0

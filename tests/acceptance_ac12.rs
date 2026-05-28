@@ -11,12 +11,74 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::fs;
+use std::process::Command;
+
+fn bin() -> std::path::PathBuf {
+    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("target");
+    p.push("debug");
+    p.push("cradle");
+    p
+}
+
+fn ensure_bin_built() {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--bin", "cradle", "--quiet"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo build failed");
+}
 
 #[test]
 fn acceptance_ac12() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC12 not yet implemented — see file header");
+    ensure_bin_built();
+    let exe = bin();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let models = root.join("models");
+    let model_dir = models.join("redirect");
+    fs::create_dir_all(&model_dir).unwrap();
+    fs::write(
+        model_dir.join("spec.toml"),
+        r#"name = "redirect"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0
+
+[label_extractor.redirect_v1]
+positive_keywords = ["wait", "actually"]
+require_behavioral_change_next_turn = false
+"#,
+    )
+    .unwrap();
+    let transcripts = root.join("transcripts");
+    fs::create_dir_all(&transcripts).unwrap();
+    let lines = [
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"a"}]}}"#,
+        r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"wait"}]}}"#,
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"b"}]}}"#,
+    ];
+    fs::write(transcripts.join("s.jsonl"), lines.join("\n")).unwrap();
+
+    let out = Command::new(&exe)
+        .args(["harvest", "redirect", "--models-dir"])
+        .arg(&models)
+        .arg("--transcripts-dir")
+        .arg(&transcripts)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "harvest should succeed");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Stable format: "cradle-harvest: pos=N neg=N sessions=N turns=N split=N/N/N"
+    assert!(
+        stderr.contains("cradle-harvest:"),
+        "stderr should contain cradle-harvest: prefix; got: {stderr}"
+    );
+    for k in ["pos=", "neg=", "sessions=", "turns=", "split="] {
+        assert!(stderr.contains(k), "stats missing {k}: {stderr}");
+    }
 }

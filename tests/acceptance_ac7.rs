@@ -11,12 +11,77 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+use cradle::orchestrator::{OrchestrationError, run_train};
+
+fn make_runner(dir: &std::path::Path, exit_code: i32, stderr: &str) -> std::path::PathBuf {
+    let runner = dir.join("fake-runner.sh");
+    let body = format!(
+        r#"#!/usr/bin/env bash
+# fake runner — ignores "run python <path>" args; just records env and exits.
+echo "{stderr}" >&2
+exit {exit_code}
+"#
+    );
+    fs::write(&runner, body).unwrap();
+    let mut perms = fs::metadata(&runner).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&runner, perms).unwrap();
+    runner
+}
+
+fn make_model(models_dir: &std::path::Path, name: &str, with_train_py: bool) {
+    let model_dir = models_dir.join(name);
+    fs::create_dir_all(&model_dir).unwrap();
+    fs::write(
+        model_dir.join("spec.toml"),
+        r#"name = "x"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+"#,
+    )
+    .unwrap();
+    if with_train_py {
+        fs::write(model_dir.join("train.py"), "# stub\n").unwrap();
+    }
+}
 
 #[test]
 fn acceptance_ac7() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC7 not yet implemented — see file header");
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let models = root.join("models");
+    fs::create_dir_all(&models).unwrap();
+
+    // Case 1: train.py missing → typed TrainScriptMissing error.
+    make_model(&models, "no-train", false);
+    let err = run_train(&models, "no-train", "true").unwrap_err();
+    assert!(
+        matches!(err, OrchestrationError::TrainScriptMissing(_, _)),
+        "expected TrainScriptMissing, got {err:?}"
+    );
+
+    // Case 2: train.py present + runner exits 0 → Ok.
+    make_model(&models, "happy", true);
+    let runner_ok = make_runner(root, 0, "");
+    let res = run_train(&models, "happy", runner_ok.to_str().unwrap());
+    assert!(res.is_ok(), "expected ok, got {res:?}");
+
+    // Case 3: train.py present + runner exits 7 with stderr → TrainRunnerFailed.
+    let runner_bad = make_runner(root, 7, "ERR: synthetic");
+    let err = run_train(&models, "happy", runner_bad.to_str().unwrap()).unwrap_err();
+    match err {
+        OrchestrationError::TrainRunnerFailed(code, stderr) => {
+            assert_eq!(code, Some(7), "exit code surfaced");
+            assert!(
+                stderr.contains("synthetic"),
+                "stderr surfaced; got: {stderr:?}"
+            );
+        }
+        other => panic!("expected TrainRunnerFailed, got {other:?}"),
+    }
 }

@@ -11,12 +11,110 @@
 //! the panic stub with a real assertion that verifies the AC
 //! description above.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown, clippy::indexing_slicing, clippy::panic, clippy::missing_panics_doc, clippy::float_cmp, clippy::missing_const_for_fn, clippy::similar_names, clippy::redundant_clone, clippy::option_if_let_else, clippy::needless_collect, clippy::bool_assert_comparison, clippy::large_stack_arrays)]
+
+use cradle::harvest::{ModelSpec, Transcript, Turn, extract_labels};
+
+fn spec(require_behavioral: bool) -> ModelSpec {
+    let toml_src = format!(
+        r#"
+name = "redirect"
+input_shape = "turn_pair_v1"
+label_source = "redirect_v1"
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0
+
+[label_extractor.redirect_v1]
+positive_keywords = ["wait", "no", "actually", "stop", "different"]
+require_behavioral_change_next_turn = {require_behavioral}
+"#
+    );
+    toml::from_str(&toml_src).unwrap()
+}
+
+fn t(role: &str, text: &str) -> Turn {
+    Turn {
+        role: role.into(),
+        content: text.into(),
+    }
+}
 
 #[test]
 fn acceptance_ac6() {
-    // edit-agent: replace this stub with a real assertion. The
-    // panic keeps the test failing until you do, so the loop
-    // sees a real Stage 3 signal.
-    panic!("AC AC6 not yet implemented — see file header");
+    // Scenario 1: keyword match + behavioral diff in next turn → positive.
+    let transcript = Transcript {
+        session_id: "s1".into(),
+        turns: vec![
+            t("assistant", "I will run the failing command."),
+            t("user", "wait — actually, run something different"),
+            t("assistant", "let me run a completely different command instead"),
+            t("user", "ok"),
+            t("assistant", "done"),
+        ],
+    };
+    let s = spec(true);
+    let labels = extract_labels(&transcript, &s).unwrap();
+    assert!(labels.iter().any(|l| l.label == 1), "expected ≥1 positive");
+
+    // Scenario 2: no positive keyword anywhere → no positives, no negatives
+    // for those non-matching turns are sampled to balance positives count
+    // (which is 0 here, so no negatives either).
+    let transcript = Transcript {
+        session_id: "s2".into(),
+        turns: vec![
+            t("assistant", "hi"),
+            t("user", "thanks!"),
+            t("assistant", "you're welcome"),
+        ],
+    };
+    let labels = extract_labels(&transcript, &s).unwrap();
+    assert_eq!(labels.iter().filter(|l| l.label == 1).count(), 0);
+
+    // Scenario 3: keyword match BUT no behavioral change in next turn,
+    // and `require_behavioral_change_next_turn = true` → no positive.
+    let transcript = Transcript {
+        session_id: "s3".into(),
+        turns: vec![
+            t("assistant", "the cake recipe says 350 degrees"),
+            t("user", "wait"),
+            t("assistant", "the cake recipe says 350 degrees"),
+        ],
+    };
+    let labels = extract_labels(&transcript, &s).unwrap();
+    assert_eq!(
+        labels.iter().filter(|l| l.label == 1).count(),
+        0,
+        "behavioral-change required; same text in next turn should NOT be positive"
+    );
+
+    // Scenario 4: with require_behavioral_change_next_turn = false,
+    // same scenario yields a positive (looser extractor).
+    let loose = spec(false);
+    let labels = extract_labels(&transcript, &loose).unwrap();
+    assert!(
+        labels.iter().any(|l| l.label == 1),
+        "loose extractor should emit a positive on keyword alone"
+    );
+
+    // Scenario 5: balanced sampling — when there are k positives and
+    // > k non-matching candidates, exactly k negatives are sampled.
+    let mut turns = vec![
+        t("assistant", "run command alpha"),
+        t("user", "wait, do something different"),
+        t("assistant", "running command beta entirely"),
+    ];
+    // Append 10 boring user turns with no redirects and no behavioral diff.
+    for i in 0..10 {
+        turns.push(t("user", &format!("boring user turn {i}")));
+        turns.push(t("assistant", &format!("boring assistant reply {i}")));
+    }
+    let transcript = Transcript {
+        session_id: "s4".into(),
+        turns,
+    };
+    let labels = extract_labels(&transcript, &s).unwrap();
+    let pos = labels.iter().filter(|l| l.label == 1).count();
+    let neg = labels.iter().filter(|l| l.label == 0).count();
+    assert_eq!(pos, neg, "balanced sampling: pos count must equal neg count");
+    assert!(pos >= 1);
 }

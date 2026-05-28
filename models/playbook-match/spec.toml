@@ -1,0 +1,12 @@
+# Model: playbook-match — match an anomaly state vector to a known playbook.
+# v0.1: directory shell only. No label extractor yet.
+
+name = "playbook-match"
+input_shape = "turn_pair_v1"          # placeholder; this model wants a self-review feature vector
+label_source = "playbook_match_v1"    # NOT YET SHIPPED — see PRD §3 row 3
+
+threshold = 0.75
+auc_threshold = 0.75
+
+holdout_session_fraction = 15.0
+test_session_fraction = 15.0

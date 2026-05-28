@@ -1,8 +1,22 @@
-//! cradle — autobuilder-scaffolded library.
+//! cradle — the user-facing library surface for the cradle binary.
 //!
-//! Generated stub. The edit-agent replaces this body across iterations.
+//! The bulk of the logic lives in two sibling crates:
 //!
-//! When `target_kind == cli`, this file is overwritten or removed by the
-//! scaffold step. When `target_kind == lib`, this is the primary surface.
+//! - [`cradle_harvest`] — transcript JSONL → labeled examples + split
+//! - [`cradle_features`] — shared featurization registry
+//!
+//! This crate re-exports the public surface so the binary can `use
+//! cradle::...` and so external consumers (autobuilder, tests) have
+//! one place to import from.
 
-#![cfg_attr(not(test), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
+
+pub use cradle_features as features;
+pub use cradle_harvest as harvest;
+
+pub mod cli;
+pub mod orchestrator;
+
+/// Version string for the crate. Kept manually in sync with `Cargo.toml`'s
+/// `package.version`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
