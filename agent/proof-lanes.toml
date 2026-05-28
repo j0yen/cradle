@@ -34,8 +34,8 @@ required_commands = [
 
 [[lane]]
 id = "docs"
-description = "README, LICENSE, gitignore — text-only artifacts that do not affect behavior"
-globs = ["README.md", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore"]
+description = "README, LICENSE, gitignore, PRD mirror — text-only artifacts that do not affect behavior"
+globs = ["README.md", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", "PRD-*.md"]
 required_commands = [
   "cargo check --workspace",
 ]
