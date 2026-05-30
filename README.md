@@ -81,6 +81,10 @@ hand-built prototype it replaces is preserved at
 [autobuilder]: https://github.com/j0yen/autobuilder
 [prd]: https://github.com/j0yen/autobuilder/blob/main/PRD-cradle.md
 
+## Recent
+
+- **v0.1.1 (2026-05-30):** `cradle bake` is now implemented — parses `[bake]` from spec.toml, gates on receipt 7 (test_accuracy >= threshold), and generates an `output/morsel-<model>/` Rust crate skeleton; `cradle build` runs the full harvest → train → bake pipeline.
+
 ## License
 
 Dual-licensed under MIT OR Apache-2.0. See [`LICENSE-MIT`](LICENSE-MIT)
