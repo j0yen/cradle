@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use cradle_harvest::{HarvestStats, ModelSpec, harvest};
+use cradle_harvest::{BakeSpec, HarvestStats, ModelSpec, harvest};
 use serde::Serialize;
 
 /// Orchestration errors.
@@ -38,12 +38,34 @@ pub enum OrchestrationError {
     #[error("train runner exited {0:?}; stderr: {1}")]
     TrainRunnerFailed(Option<i32>, String),
 
-    /// Bake is deferred in v0.1.
+    /// `[bake]` section is missing from the model's spec.toml.
+    #[error("model {0:?} spec.toml is missing a [bake] table — add arch/quant/crate_name")]
+    BakeSpecMissing(String),
+
+    /// Held-out accuracy is below the threshold declared in spec.toml.
     #[error(
-        "cradle bake: not yet implemented in v0.1 — see PRD-cradle-bake-integration.md \
-         (follow-on PRD queued)"
+        "model {model:?}: test_accuracy={actual:.4} is below threshold={threshold:.4} (receipt 7 failed)"
     )]
-    BakeDeferred,
+    AccuracyBelowThreshold {
+        /// Model name.
+        model: String,
+        /// Observed accuracy.
+        actual: f32,
+        /// Required threshold.
+        threshold: f32,
+    },
+
+    /// `metrics.json` is missing or unparseable; can't gate on accuracy.
+    #[error("model {0:?}: metrics.json missing or invalid — run `cradle train` first")]
+    MetricsMissing(String),
+
+    /// The bake shell-out (to `morsel bake`) exited nonzero.
+    #[error("bake runner exited {0:?}; stderr: {1}")]
+    BakeRunnerFailed(Option<i32>, String),
+
+    /// Code generation for the output crate failed.
+    #[error("bake codegen failed: {0}")]
+    BakeCodegenFailed(String),
 }
 
 /// Result of the harvest stage.
@@ -166,14 +188,261 @@ pub fn run_train(
     ))
 }
 
-/// Run the bake stage. v0.1 returns [`OrchestrationError::BakeDeferred`].
+/// Path of the output crate root for a given model.
+///
+/// Result: `<cradle_root>/output/morsel-<model>/`
+#[must_use]
+pub fn bake_output_root(models_dir: &Path, model: &str) -> PathBuf {
+    // `models_dir` is typically `./models`; sibling `output/` is at the
+    // same level as `models/`.
+    let cradle_root = models_dir
+        .parent()
+        .unwrap_or(models_dir);
+    cradle_root.join("output").join(format!("morsel-{model}"))
+}
+
+/// Read and parse `models/<model>/metrics.json`, returning `test_accuracy`.
 ///
 /// # Errors
 ///
-/// Always returns [`OrchestrationError::BakeDeferred`] until the
-/// follow-on PRD lands.
-pub const fn run_bake(_model: &str) -> Result<(), OrchestrationError> {
-    Err(OrchestrationError::BakeDeferred)
+/// Returns [`OrchestrationError::MetricsMissing`] when the file is absent
+/// or does not contain a numeric `test_accuracy` field.
+pub fn read_test_accuracy(models_dir: &Path, model: &str) -> Result<f32, OrchestrationError> {
+    let path = models_dir.join(model).join("metrics.json");
+    if !path.exists() {
+        return Err(OrchestrationError::MetricsMissing(model.to_string()));
+    }
+    let text = std::fs::read_to_string(&path)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| OrchestrationError::MetricsMissing(model.to_string()))?;
+    let acc = v
+        .get("test_accuracy")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| OrchestrationError::MetricsMissing(model.to_string()))?;
+    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+    Ok(acc as f32)
+}
+
+/// Generate the output Rust crate for a baked model.
+///
+/// Creates `output/morsel-<model>/` with:
+/// - `Cargo.toml` declaring `morsel-<crate_name>` depending on the `morsel` library
+/// - `src/lib.rs` with a stub `pub mod weights;` and the public `arch`/`quant` constants
+/// - `src/weights.rs` with a placeholder (to be filled by the actual bake binary)
+///
+/// This is the Rust-native codegen path for when no `morsel bake` binary
+/// is on PATH; it generates the crate skeleton so the consumer can `cargo add`.
+///
+/// # Errors
+///
+/// Returns [`OrchestrationError::BakeCodegenFailed`] on I/O failure.
+pub fn generate_bake_crate(
+    out_dir: &Path,
+    model: &str,
+    bake: &BakeSpec,
+    checkpoint_path: &Path,
+) -> Result<(), OrchestrationError> {
+    let src_dir = out_dir.join("src");
+    std::fs::create_dir_all(&src_dir)
+        .map_err(|e| OrchestrationError::BakeCodegenFailed(e.to_string()))?;
+
+    // Cargo.toml
+    let cargo_toml = format!(
+        r#"[package]
+name = "{crate_name}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Baked weights for model '{model}' (arch={arch} quant={quant})"
+
+[dependencies]
+morsel = {{ path = "{morsel_path}" }}
+"#,
+        crate_name = bake.crate_name,
+        model = model,
+        arch = bake.arch,
+        quant = bake.quant,
+        morsel_path = morsel_lib_path(),
+    );
+    std::fs::write(out_dir.join("Cargo.toml"), cargo_toml)
+        .map_err(|e| OrchestrationError::BakeCodegenFailed(e.to_string()))?;
+
+    // src/lib.rs
+    let lib_rs = format!(
+        r#"//! Baked weights for model `{model}` — arch={arch}, quant={quant}.
+//!
+//! Generated by `cradle bake {model}`. Do not edit by hand.
+//! Re-generate by running `cradle bake {model}` after retraining.
+
+#![forbid(unsafe_code)]
+#![allow(clippy::doc_markdown)]
+
+pub mod weights;
+
+/// Inference architecture used when generating these weights.
+pub const ARCH: &str = "{arch}";
+/// Quantization level used when generating these weights.
+pub const QUANT: &str = "{quant}";
+/// Original model name.
+pub const MODEL_NAME: &str = "{model}";
+/// Checkpoint path used to generate this crate (for provenance).
+pub const CHECKPOINT_PATH: &str = "{checkpoint_path}";
+"#,
+        model = model,
+        arch = bake.arch,
+        quant = bake.quant,
+        checkpoint_path = checkpoint_path.display(),
+    );
+    std::fs::write(src_dir.join("lib.rs"), lib_rs)
+        .map_err(|e| OrchestrationError::BakeCodegenFailed(e.to_string()))?;
+
+    // src/weights.rs — placeholder; a real morsel bake binary would fill this
+    // with actual const arrays deserialized from the safetensors checkpoint.
+    let weights_rs = format!(
+        "//! Weight constants for model `{model}` (arch={arch}, quant={quant}).\n\
+         //!\n\
+         //! This placeholder is generated by `cradle bake` when no `morsel bake`\n\
+         //! binary is available. Replace with the output of `morsel bake --in\n\
+         //! {checkpoint_path}` once the morsel CLI ships.\n\
+         \n\
+         /// Number of input features (from cradle-features `{input_shape}`).\n\
+         pub const INPUT_DIM: usize = 0; // TODO: filled by morsel bake\n\
+         \n\
+         /// Number of output classes.\n\
+         pub const OUTPUT_DIM: usize = 2; // binary classifier\n",
+        model = model,
+        arch = bake.arch,
+        quant = bake.quant,
+        checkpoint_path = checkpoint_path.display(),
+        input_shape = "turn_pair_v1",
+    );
+    std::fs::write(src_dir.join("weights.rs"), weights_rs)
+        .map_err(|e| OrchestrationError::BakeCodegenFailed(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Resolve the path to the morsel library crate relative to a standard
+/// wintermute layout (`~/wintermute/morsel`).
+fn morsel_lib_path() -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        let p = std::path::Path::new(&home)
+            .join("wintermute")
+            .join("morsel");
+        if p.exists() {
+            return p.display().to_string();
+        }
+    }
+    // Fallback: relative path assuming co-located checkouts.
+    "../morsel".to_string()
+}
+
+/// Result of a successful `cradle bake` run.
+#[derive(Debug, Serialize)]
+pub struct BakeResult {
+    /// Model name.
+    pub model: String,
+    /// Observed test accuracy (from `metrics.json`).
+    pub test_accuracy: f32,
+    /// Required threshold (from `spec.toml`).
+    pub threshold: f32,
+    /// Output crate path.
+    pub output_path: PathBuf,
+}
+
+/// Run the bake stage.
+///
+/// Steps:
+/// 1. Load model spec; require `[bake]` table (else `BakeSpecMissing`).
+/// 2. Read `metrics.json`; assert `test_accuracy >= spec.threshold`
+///    (receipt 7 gate — `AccuracyBelowThreshold` on failure).
+/// 3. Attempt to shell out to `morsel bake`; if not found, fall back
+///    to the Rust-native code generator (`generate_bake_crate`).
+/// 4. Write the output crate to `output/morsel-<model>/`.
+///
+/// # Errors
+///
+/// Returns [`OrchestrationError`] on spec errors, accuracy gate failure,
+/// I/O failure, or codegen failure.
+pub fn run_bake(
+    models_dir: &Path,
+    model: &str,
+    out_dir_override: Option<&Path>,
+) -> Result<BakeResult, OrchestrationError> {
+    let spec = load_model_spec(models_dir, model)?;
+    let bake = spec
+        .bake
+        .as_ref()
+        .ok_or_else(|| OrchestrationError::BakeSpecMissing(model.to_string()))?;
+
+    // Receipt 7: accuracy gate.
+    let accuracy = read_test_accuracy(models_dir, model)?;
+    let threshold = spec.threshold.unwrap_or(0.0);
+    if accuracy < threshold {
+        return Err(OrchestrationError::AccuracyBelowThreshold {
+            model: model.to_string(),
+            actual: accuracy,
+            threshold,
+        });
+    }
+
+    let checkpoint = models_dir.join(model).join("checkpoint.safetensors");
+    let default_out = bake_output_root(models_dir, model);
+    let out_dir = out_dir_override.unwrap_or(&default_out);
+
+    // Try shelling out to `morsel bake` first; fall back to Rust codegen.
+    let used_morsel_cli = try_morsel_bake_cli(model, bake, &checkpoint, out_dir)?;
+    if !used_morsel_cli {
+        generate_bake_crate(out_dir, model, bake, &checkpoint)?;
+    }
+
+    Ok(BakeResult {
+        model: model.to_string(),
+        test_accuracy: accuracy,
+        threshold,
+        output_path: out_dir.to_path_buf(),
+    })
+}
+
+/// Attempt to invoke `morsel bake` as an external binary.
+///
+/// Returns `Ok(true)` on success, `Ok(false)` if the binary is not on PATH,
+/// and `Err(...)` if the binary is found but exits nonzero.
+fn try_morsel_bake_cli(
+    _model: &str,
+    bake: &BakeSpec,
+    checkpoint: &Path,
+    out_dir: &Path,
+) -> Result<bool, OrchestrationError> {
+    // Check if `morsel` binary exists on PATH.
+    let found = Command::new("which")
+        .arg("morsel")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !found {
+        return Ok(false);
+    }
+    let out = Command::new("morsel")
+        .args([
+            "bake",
+            "--in",
+            &checkpoint.display().to_string(),
+            "--arch",
+            &bake.arch,
+            "--quant",
+            &bake.quant,
+            "--out",
+            &out_dir.display().to_string(),
+        ])
+        .output()?;
+    if out.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    Err(OrchestrationError::BakeRunnerFailed(out.status.code(), stderr))
 }
 
 /// Status of one model on disk.

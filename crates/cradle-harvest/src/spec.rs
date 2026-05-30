@@ -51,6 +51,24 @@ pub struct ModelSpec {
     /// `label_source`; the harvest looks up `label_extractor.<source>`.
     #[serde(default, rename = "label_extractor")]
     pub label_extractors: std::collections::BTreeMap<String, LabelExtractorConfig>,
+    /// Optional bake configuration for `cradle bake`.
+    #[serde(default)]
+    pub bake: Option<BakeSpec>,
+}
+
+/// Bake configuration from the `[bake]` table in `spec.toml`.
+///
+/// Controls how `cradle bake` generates the output Rust crate.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BakeSpec {
+    /// Architecture name (e.g. `logreg`, `tiny_mlp`).
+    /// Passed as `--arch` to the bake step.
+    pub arch: String,
+    /// Quantization level (e.g. `q8`, `f32`).
+    /// Passed as `--quant` to the bake step.
+    pub quant: String,
+    /// Output crate name (e.g. `morsel-redirect`).
+    pub crate_name: String,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -152,6 +170,27 @@ mod tests {
         let cfg = s.label_extractor_config().unwrap();
         assert_eq!(cfg.positive_keywords.len(), 3);
         assert!(cfg.require_behavioral_change_next_turn);
+    }
+
+    #[test]
+    fn parses_bake_spec() {
+        let toml_src = r#"
+            name = "redirect"
+            input_shape = "turn_pair_v1"
+            label_source = "redirect_v1"
+            threshold = 0.85
+            auc_threshold = 0.85
+
+            [bake]
+            arch = "logreg"
+            quant = "q8"
+            crate_name = "morsel-redirect"
+        "#;
+        let s: ModelSpec = toml::from_str(toml_src).unwrap();
+        let bake = s.bake.unwrap();
+        assert_eq!(bake.arch, "logreg");
+        assert_eq!(bake.quant, "q8");
+        assert_eq!(bake.crate_name, "morsel-redirect");
     }
 
     #[test]

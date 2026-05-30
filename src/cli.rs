@@ -76,6 +76,14 @@ pub struct TrainArgs {
 pub struct BakeArgs {
     /// Model name.
     pub model: String,
+
+    /// Models directory (default: `./models`).
+    #[arg(long, default_value = "models")]
+    pub models_dir: PathBuf,
+
+    /// Override output crate root. Defaults to `./output/morsel-<model>/`.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
 }
 
 /// Args for `cradle build`.

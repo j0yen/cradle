@@ -63,8 +63,13 @@ fn do_train(args: TrainArgs) -> Result<(), OrchestrationError> {
 }
 
 fn do_bake(args: BakeArgs) -> Result<(), OrchestrationError> {
-    // Intentionally returns BakeDeferred — see AC8.
-    run_bake(&args.model)
+    let result = run_bake(&args.models_dir, &args.model, args.out_dir.as_deref())?;
+    let out_path = result.output_path.display().to_string();
+    println!(
+        "cradle: bake {} ok (test_accuracy={:.4} >= {:.4}) → {out_path}",
+        result.model, result.test_accuracy, result.threshold,
+    );
+    Ok(())
 }
 
 fn do_build(args: BuildArgs) -> Result<(), OrchestrationError> {
@@ -85,7 +90,34 @@ fn do_build(args: BuildArgs) -> Result<(), OrchestrationError> {
             }
         }
     }
-    println!("cradle: build {}: phase 2 deferred (see PRD-cradle-bake-integration.md)", args.model);
+    match run_bake(&args.models_dir, &args.model, None) {
+        Ok(bake_result) => {
+            let out = bake_result.output_path.display().to_string();
+            println!("cradle: build {} bake ok → {out}", args.model);
+            println!(
+                "cradle: build {}: receipt 7 (test_accuracy={:.4} >= {:.4})",
+                args.model, bake_result.test_accuracy, bake_result.threshold,
+            );
+        }
+        Err(OrchestrationError::BakeSpecMissing(_)) => {
+            // No [bake] table — not an error for build; skip with notice.
+            println!(
+                "cradle: build {}: bake skipped (no [bake] in spec.toml — add to enable)",
+                args.model
+            );
+        }
+        Err(OrchestrationError::MetricsMissing(_)) => {
+            // No metrics.json — train wasn't run or was skipped.
+            println!(
+                "cradle: build {}: bake skipped (metrics.json not present — run train first)",
+                args.model
+            );
+        }
+        Err(e) => {
+            eprintln!("cradle: build {} bake failed: {e}", args.model);
+            return Err(e);
+        }
+    }
     Ok(())
 }
 

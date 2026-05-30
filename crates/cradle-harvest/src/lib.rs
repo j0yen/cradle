@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-pub use spec::{LabelExtractorConfig, ModelSpec, SpecError};
+pub use spec::{BakeSpec, LabelExtractorConfig, ModelSpec, SpecError};
 
 /// Errors returned during harvest.
 #[derive(Debug, thiserror::Error)]
