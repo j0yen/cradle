@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "cradle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "cradle-features"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "cradle-harvest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cradle-features",
  "serde",

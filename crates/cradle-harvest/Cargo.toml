@@ -1,6 +1,6 @@
 [package]
 name = "cradle-harvest"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 walkdir = { workspace = true }
-cradle-features = { path = "../cradle-features", version = "0.1.0" }
+cradle-features = { path = "../cradle-features", version = "0.2.0" }
 
 [dev-dependencies]
 tempfile = "3"
